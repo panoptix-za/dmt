@@ -1,0 +1,9 @@
+foo: bar
+list:
+  - one
+  - two
+  - three
+foo:
+  shoo:
+    - one: name
+    - one: thee

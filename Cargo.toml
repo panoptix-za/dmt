@@ -1,0 +1,21 @@
+[package]
+authors = ["Stephan Buys <stephan.buys@panoptix.co.za>"]
+name = "dmt"
+version = "0.1.0"
+
+[dependencies]
+csv = "1.0.0-beta.5"
+env_logger = "0.4.3"
+error-chain = "0.11.0"
+failure = "0.1.0"
+failure_derive = "0.1.0"
+glob = "0.2.11"
+log = "0.3.8"
+os_info = "0.3.0"
+raw-cpuid = "3.0.0"
+serde = "1.0.19"
+serde_yaml = "0.7.1"
+
+[dependencies.tera]
+#branch = "v0.11"
+path = "../../library/tera"

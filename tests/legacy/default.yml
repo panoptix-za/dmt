@@ -1,0 +1,10 @@
+variables:
+  Elements:
+  - elem1
+  - elem2
+  Grouping:
+    Subgrouping:
+# This is object one
+      - name: object1
+# This is object two
+      - name: object2
