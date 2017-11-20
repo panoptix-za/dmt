@@ -8,6 +8,7 @@ extern crate env_logger;
 //extern crate error_chain;
 extern crate serde_yaml;
 extern crate csv;
+extern crate regex;
 
 #[macro_use]
 extern crate failure;
@@ -26,7 +27,7 @@ use std::path::{Path, PathBuf};
 use std::fs;
 use std::collections::HashMap;
 use std::iter::FromIterator;
-
+use regex::Regex;
 
 mod sysinfo;
 mod datasources;
@@ -465,6 +466,9 @@ impl<'ren> TemplateRenderer<'ren> {
             }
         };
 
+        let mut mp_file: HashMap<String, String> = HashMap::new();
+        let re = Regex::new(r"([\w\d]{0,5})_([^_]+)_(\d{1,5})*\.?mp\.dmt\.tpl$").unwrap();
+
         for (path, _) in &tera.templates {
             let template_full_path = Path::new(&path);
             let template_directory = template_full_path.parent().ok_or(err_msg("string conversion failed for path"))?;
@@ -486,11 +490,35 @@ impl<'ren> TemplateRenderer<'ren> {
             debug!("target_filename     : {:?}", target_filename);
             debug!("target_full_path    : {:?}", target_full_path);
 
+            for cap in re.captures_iter(template_filename.to_str().ok_or(err_msg("string conversion failed for path"))?) {
+                debug!("{:?}", cap);
+            }
+
+//            if target_filename.ends_with(".mp") {
+//                debug!("this template is a part of a multipart file");
+//                let v = Vec::from_iter(target_filename.split('.'));
+//                debug!("{:?}", v);
+//                let l = v.len();
+//                let basename = v[0];
+//                let seriesname = v[l - 2];
+//                let filename = v[l - 1];
+//                let indent = v[l - 3];
+//                let mut indent32: i32 = 0;
+//                debug!("mp_base_name        : {:?}", basename);
+//                debug!("mp_series_name      : {:?}", seriesname);
+//                debug!("mp_file_name        : {:?}", filename);
+//                debug!("mp_indent           : {:?}", indent);
+//                if indent != basename {
+//                    if let Ok(i) = indent.parse::<i32>() {
+//                        indent32 = i;
+//                    }
+//                }
+//            }
+
             let target_full_path_str = target_full_path
                 .to_str().ok_or(err_msg("string conversion failed for path"))?;
 
             if target_full_path_str.ends_with(self.target_extension) {
-                //                bail!("target still contains the template externsion, aborting");
                 return Err(err_msg("target still contains the template externsion, aborting"));
             }
 
@@ -622,7 +650,23 @@ mod tests {
         let mut tr = TemplateRenderer::new(&base_path, pattern, extension);
         tr.add_all_datasources();
 
-        //        let mut tr = TemplateRenderer::default();
+        match tr.render() {
+            Err(e) => {
+                eprintln!("{:?}",e);
+                ::std::process::exit(1);
+            }
+            _ => (),
+        }
+    }
+
+    #[test]
+    fn multipart_renderer() {
+        let extension = DEFAULT_TPL_EXTENSION;
+        let pattern = DEFAULT_GLOB;
+        let base_path = "tests/multipart/";
+
+        let mut tr = TemplateRenderer::new(&base_path, pattern, extension);
+        tr.add_all_datasources();
 
         match tr.render() {
             Err(e) => {
@@ -660,8 +704,6 @@ mod tests {
         let mut tr = TemplateRenderer::new(&base_path, pattern, extension);
         tr.set_mode(VariableMode::MiniMode);
         tr.add_all_datasources();
-
-        //        let mut tr = TemplateRenderer::default();
 
         match tr.render() {
             Err(e) => {

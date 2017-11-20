@@ -13,9 +13,9 @@ glob = "0.2.11"
 log = "0.3.8"
 os_info = "0.3.0"
 raw-cpuid = "3.0.0"
+regex = "0.2.2"
 serde = "1.0.19"
 serde_yaml = "0.7.1"
 
 [dependencies.tera]
-#branch = "v0.11"
 path = "../../library/tera"

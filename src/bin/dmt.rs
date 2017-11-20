@@ -8,10 +8,7 @@ fn main(){
 
     match tr.render() {
         Err(e) => {
-            eprintln!("{}, ", e);
-            for e in e.iter().skip(1) {
-                eprintln!("{}", e);
-            }
+            eprintln!("{:?}",e);
             ::std::process::exit(1);
         }
         _ => (),
