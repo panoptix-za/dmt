@@ -29,7 +29,7 @@ use std::collections::HashMap;
 use std::iter::FromIterator;
 use regex::Regex;
 
-mod sysinfo;
+//mod sysinfo;
 mod datasources;
 
 pub static DEFAULT_PATH: &str = "";
@@ -467,7 +467,7 @@ impl<'ren> TemplateRenderer<'ren> {
         };
 
         let mut mp_file: HashMap<String, String> = HashMap::new();
-        let re = Regex::new(r"([\w\d]{0,5})_([^_]+)_(\d{1,5})*\.?mp\.dmt\.tpl$").unwrap();
+        let mp_re = Regex::new(r"^(:?(:?(?P<order>[^_]+)_(?P<indent>\d+)_)|(:?(?P<justorder>[^_]+)_))(?P<filename>.+)\.dmt\.mptpl$").unwrap();
 
         for (path, _) in &tera.templates {
             let template_full_path = Path::new(&path);
@@ -490,9 +490,12 @@ impl<'ren> TemplateRenderer<'ren> {
             debug!("target_filename     : {:?}", target_filename);
             debug!("target_full_path    : {:?}", target_full_path);
 
-            for cap in re.captures_iter(template_filename.to_str().ok_or(err_msg("string conversion failed for path"))?) {
-                debug!("{:?}", cap);
+            for cap in mp_re.captures_iter(template_filename.to_str().ok_or(err_msg("string conversion failed for path"))?) {
+                debug!("REGEX: {:?}", cap);
             }
+
+            //
+
 
 //            if target_filename.ends_with(".mp") {
 //                debug!("this template is a part of a multipart file");
