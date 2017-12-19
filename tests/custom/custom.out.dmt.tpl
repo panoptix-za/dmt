@@ -1,3 +1,3 @@
-{% if custom is defined %}
+{%- if custom is defined -%}
 {{ custom }}
-{% endif %}
+{%- endif %}

@@ -555,6 +555,7 @@ mod tests {
     use super::*;
     use std::fs::File;
     use failure::Fail;
+    use std::env;
 
     #[test]
     fn test_custom() {
@@ -587,6 +588,8 @@ mod tests {
 
     #[test]
     fn test_precendence() {
+        env::set_var("ENV", "yes_for_env");
+        env::set_var("priority", "env");
         let test_string = "priority? env";
 
         let extension = DEFAULT_TPL_EXTENSION;
@@ -609,7 +612,6 @@ mod tests {
         let mut file = File::open("tests/precedence/precedence.out").unwrap();
         let mut contents = String::new();
         file.read_to_string(&mut contents).unwrap();
-
         assert!(contents.contains(test_string));
     }
 

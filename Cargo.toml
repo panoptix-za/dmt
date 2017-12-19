@@ -1,5 +1,5 @@
 [package]
-authors = ["Stephan Buys <stephan.buys@panoptix.co.za>"]
+authors = ["Stephan Buys <hello@stephanbuys.com>"]
 name = "dmt"
 version = "0.1.0"
 
@@ -16,6 +16,4 @@ raw-cpuid = "3.0.0"
 regex = "0.2.2"
 serde = "1.0.19"
 serde_yaml = "0.7.1"
-
-[dependencies.tera]
-path = "../../library/tera"
+tera = "0.11.0-beta.1"
