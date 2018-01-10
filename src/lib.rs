@@ -1,14 +1,15 @@
-#[macro_use]
-extern crate tera;
+extern crate env_logger;
 extern crate glob;
 #[macro_use]
 extern crate log;
-extern crate env_logger;
-//#[macro_use]
-//extern crate error_chain;
-extern crate serde_yaml;
+#[macro_use]
+extern crate tera;
 extern crate csv;
 extern crate regex;
+
+#[macro_use]
+extern crate serde_derive;
+extern crate serde_yaml;
 
 #[macro_use]
 extern crate failure;
@@ -19,22 +20,18 @@ use std::env;
 use tera::Tera;
 use tera::Context;
 use std::io::prelude::*;
-use std::fs::OpenOptions;
-use std::fs::File;
+use std::fs::{self, File, OpenOptions};
 use glob::glob;
 use serde_yaml::Value;
 use std::path::{Path, PathBuf};
-use std::fs;
 use std::collections::HashMap;
 use std::iter::FromIterator;
 use regex::Regex;
 
-//mod sysinfo;
-mod datasources;
-
 pub static DEFAULT_PATH: &str = "";
 pub static DEFAULT_GLOB: &str = "**/*";
 pub static DEFAULT_TPL_EXTENSION: &str = ".dmt.tpl";
+pub static DEFAULT_MPTPL_EXTENSION: &str = ".dmt.mtpl";
 pub static DEFAULT_CTX_EXTENSION: &str = ".dmt.ctx";
 pub static DEFAULT_CSV_EXTENSION: &str = ".dmt.csv";
 
@@ -47,21 +44,23 @@ pub static DEFAULT_DEF_PREFIX: &str = "";
 pub static DEFAULT_VAR_FILE: &str = "default.yml";
 pub static LOCAL_VAR_FILE: &str = "local.yml";
 
-//mod errors {
-//    error_chain! {}
-//}
-
-//use errors::*;
 use std::str::FromStr;
 use failure::Error;
 use failure::ResultExt;
 use failure::err_msg;
 
-
 #[derive(Copy, Clone)]
 enum VariableMode {
     MiniMode,
-    DMTMode
+    DMTMode,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MultipartTemplate {
+    preamble: String,
+    glob: String,
+    postfix: String,
+    indent: u8,
 }
 
 pub struct TemplateRenderer<'ren> {
@@ -70,7 +69,8 @@ pub struct TemplateRenderer<'ren> {
     target_tpl_glob: &'ren str,
     base_path: &'ren str,
     target_extension: &'ren str,
-    data_sources: Vec<Box<DataSource>>
+    target_mp_extension: &'ren str,
+    data_sources: Vec<Box<DataSource>>,
 }
 
 trait DataSource {
@@ -111,12 +111,13 @@ struct YamlFileDatasource<'res> {
 
 impl<'res> DataSource for YamlFileDatasource<'res> {
     fn load(&self) -> Result<Context, Error> {
-        //        let mut file = File::open(self.target.to_str().chain_err(|| "conversion error")?).chain_err(|| "file open error")?;
         let mut file = match File::open(&self.target) {
             Ok(file) => file,
-            Err(e) => return {
-                let err = format_err!("could not open: {}", self.target.to_str().unwrap());
-                Err(err)
+            Err(e) => {
+                return {
+                    let err = format_err!("could not open: {}", self.target.to_str().unwrap());
+                    Err(err)
+                }
             }
         };
         let mut contents = String::new();
@@ -214,7 +215,7 @@ impl<'res> DataSource for CSVDatasource<'res> {
                 } else {
                     vec_store.push(record);
                 }
-            };
+            }
 
             if let Some(rootkey) = rootkey {
                 if vec_store.len() > 0 {
@@ -229,12 +230,29 @@ impl<'res> DataSource for CSVDatasource<'res> {
     }
 }
 
+fn build_search_path(base: &str, glob: &str, ext: &str) -> Result<String, Error> {
+    let full_filename_pattern = [glob, ext].concat();
+    debug!("full_pattern        : {:?}", full_filename_pattern);
+
+    let mut extended_pattern = PathBuf::new();
+    extended_pattern.push(base);
+    extended_pattern.push(full_filename_pattern);
+
+    let extended_pattern = extended_pattern
+        .to_str()
+        .ok_or(err_msg("str conversion failed"))?;
+
+    debug!("extended_pattern    : {:?}", extended_pattern);
+
+    Ok(String::from(extended_pattern))
+}
 
 impl<'ren> TemplateRenderer<'ren> {
     fn new(
         base_path: &'ren str,
         target_glob: &'ren str,
         target_extension: &'ren str,
+        target_mp_extension: &'ren str,
     ) -> TemplateRenderer<'ren> {
         env_logger::init();
 
@@ -246,7 +264,8 @@ impl<'ren> TemplateRenderer<'ren> {
             target_tpl_glob: target_glob,
             base_path,
             target_extension,
-            data_sources: Vec::new()
+            target_mp_extension,
+            data_sources: Vec::new(),
         }
     }
 
@@ -254,20 +273,24 @@ impl<'ren> TemplateRenderer<'ren> {
         let base_path = DEFAULT_PATH;
         let target_glob = DEFAULT_GLOB;
         let target_extension = DEFAULT_TPL_EXTENSION;
+        let target_mp_extension = DEFAULT_MPTPL_EXTENSION;
 
-        let mut n = TemplateRenderer::new(base_path, target_glob, target_extension);
+        let mut n = TemplateRenderer::new(
+            base_path,
+            target_glob,
+            target_extension,
+            target_mp_extension,
+        );
 
         n.add_all_datasources();
 
         n
     }
 
-
     fn add_datasource<D: DataSource + 'static>(&mut self, name: &str, source: D) {
         debug!("adding: {}", name);
         self.data_sources.push(Box::new(source));
     }
-
 
     fn set_mode(&mut self, mode: VariableMode) {
         self.target_extension = ".orig.tpl";
@@ -286,22 +309,6 @@ impl<'ren> TemplateRenderer<'ren> {
         Ok(())
     }
 
-    fn build_search_path(&mut self, base: &'ren str, glob: &'ren str, ext: &'ren str) -> Result<String, Error> {
-        let full_filename_pattern = [glob, ext].concat();
-        debug!("full_pattern        : {:?}", full_filename_pattern);
-
-        let mut extended_pattern = PathBuf::new();
-        extended_pattern.push(base);
-        extended_pattern.push(full_filename_pattern);
-
-        let extended_pattern = extended_pattern
-            .to_str().ok_or(err_msg("str conversion failed"))?;
-
-        debug!("extended_pattern    : {:?}", extended_pattern);
-
-        Ok(String::from(extended_pattern))
-    }
-
     fn add_yml_datasource(&mut self, prefix: &'static str, target: &'ren str) -> Result<(), Error> {
         debug!("adding custom file variables to context ({})", target);
         let mut path = PathBuf::new();
@@ -313,10 +320,11 @@ impl<'ren> TemplateRenderer<'ren> {
         self.add_datasource(
             &["yml:", target].concat(),
             YamlFileDatasource {
-                mode: mode,
+                mode,
                 target: path,
-                prefix: prefix
-            });
+                prefix,
+            },
+        );
         Ok(())
     }
 
@@ -331,10 +339,11 @@ impl<'ren> TemplateRenderer<'ren> {
         self.add_datasource(
             &"local.yml",
             YamlFileDatasource {
-                mode: mode,
+                mode,
                 target: path,
-                prefix: prefix
-            });
+                prefix,
+            },
+        );
         Ok(())
     }
 
@@ -347,20 +356,19 @@ impl<'ren> TemplateRenderer<'ren> {
 
         let mode = self.mode.clone();
         self.add_datasource(
-            &"default.yml", YamlFileDatasource {
-                mode: mode,
+            &"default.yml",
+            YamlFileDatasource {
+                mode,
                 target: path,
-                prefix: prefix
-            });
+                prefix,
+            },
+        );
         Ok(())
     }
 
     fn add_env_datasource(&mut self, prefix: &'static str) -> Result<(), Error> {
         debug!("adding environment datasource");
-        self.add_datasource(
-            &"environment", EnvironmentDatasource {
-                prefix: prefix
-            });
+        self.add_datasource(&"environment", EnvironmentDatasource { prefix });
         Ok(())
     }
 
@@ -370,7 +378,8 @@ impl<'ren> TemplateRenderer<'ren> {
         debug!("target_glob         : {:?}", DEFAULT_GLOB);
         debug!("target_extension    : {:?}", DEFAULT_CSV_EXTENSION);
 
-        let extended_pattern = self.build_search_path(self.base_path, DEFAULT_GLOB, DEFAULT_CSV_EXTENSION)?;
+        let extended_pattern =
+            build_search_path(self.base_path, DEFAULT_GLOB, DEFAULT_CSV_EXTENSION)?;
 
         for entry in glob(&extended_pattern).expect("Failed to read glob pattern") {
             match entry {
@@ -379,15 +388,16 @@ impl<'ren> TemplateRenderer<'ren> {
                     debug!("ctx file            : {:?}", path);
 
                     let mode = self.mode.clone();
-                    self.add_datasource(&["csv:", path.to_str().unwrap()].concat(), CSVDatasource {
-                        key: None,
-                        target: path,
-                        prefix
-                    });
+                    self.add_datasource(
+                        &["csv:", path.to_str().unwrap()].concat(),
+                        CSVDatasource {
+                            key: None,
+                            target: path,
+                            prefix,
+                        },
+                    );
                 }
-                Err(e) => {
-                    println!("ERRROR {:?}", e)
-                }
+                Err(e) => println!("ERRROR {:?}", e),
             }
         }
         Ok(())
@@ -399,7 +409,8 @@ impl<'ren> TemplateRenderer<'ren> {
         debug!("target_glob         : {:?}", DEFAULT_GLOB);
         debug!("target_extension    : {:?}", DEFAULT_CTX_EXTENSION);
 
-        let extended_pattern = self.build_search_path(self.base_path, DEFAULT_GLOB, DEFAULT_CTX_EXTENSION)?;
+        let extended_pattern =
+            build_search_path(self.base_path, DEFAULT_GLOB, DEFAULT_CTX_EXTENSION)?;
 
         for entry in glob(&extended_pattern).expect("Failed to read glob pattern") {
             match entry {
@@ -408,34 +419,35 @@ impl<'ren> TemplateRenderer<'ren> {
                     debug!("ctx file            : {:?}", path);
 
                     let mode = self.mode.clone();
-                    self.add_datasource(&["ctx:", path.to_str().unwrap()].concat(), YamlFileDatasource {
-                        mode,
-                        target: path,
-                        prefix
-                    });
+                    self.add_datasource(
+                        &["ctx:", path.to_str().unwrap()].concat(),
+                        YamlFileDatasource {
+                            mode,
+                            target: path,
+                            prefix,
+                        },
+                    );
                     //                    self.read_yml_file(prefix, path);
                 }
-                Err(e) => {
-                    println!("ERRROR {:?}", e)
-                }
+                Err(e) => println!("ERRROR {:?}", e),
             }
         }
         Ok(())
     }
 
-    fn refresh(&mut self) -> Result<(), Error> {
+    fn refresh_contexts(&mut self) -> Result<(), Error> {
         let mut new_context = Context::new();
 
         debug!("refreshing {} datasources", &self.data_sources.len());
 
         for s in &self.data_sources {
-            let c = s.load();//.chain_err(|| "yaml deserializing error")?;
+            let c = s.load(); //.chain_err(|| "yaml deserializing error")?;
             match c {
                 Ok(c) => {
                     debug!("Add context: {:#?}", c);
                     new_context.extend(c)
-                },
-                Err(e) => ()
+                }
+                Err(_) => (),
             }
         }
 
@@ -444,16 +456,17 @@ impl<'ren> TemplateRenderer<'ren> {
         Ok(())
     }
 
-    pub fn render(&mut self) -> Result<(), Error> {
+    pub fn render_default(&mut self) -> Result<(), Error> {
         debug!("refreshing datasources");
-        self.refresh();
+        self.refresh_contexts()?;
 
         debug!("processing templates");
         debug!("base_path           : {:?}", self.base_path);
         debug!("target_tpl_glob     : {:?}", self.target_tpl_glob);
         debug!("target_extension    : {:?}", self.target_extension);
 
-        let extended_pattern = self.build_search_path(self.base_path, self.target_tpl_glob, self.target_extension)?;
+        let extended_pattern =
+            build_search_path(self.base_path, self.target_tpl_glob, self.target_extension)?;
 
         let tera = match Tera::new(&extended_pattern) {
             Ok(tera) => tera,
@@ -466,16 +479,18 @@ impl<'ren> TemplateRenderer<'ren> {
             }
         };
 
-        let mut mp_file: HashMap<String, String> = HashMap::new();
-        let mp_re = Regex::new(r"^(:?(:?(?P<order>[^_]+)_(?P<indent>\d+)_)|(:?(?P<justorder>[^_]+)_))(?P<filename>.+)\.dmt\.mptpl$").unwrap();
-
         for (path, _) in &tera.templates {
             let template_full_path = Path::new(&path);
-            let template_directory = template_full_path.parent().ok_or(err_msg("string conversion failed for path"))?;
-            let template_filename = template_full_path.file_name().ok_or(err_msg("string conversion failed for path"))?;
+            let template_directory = template_full_path
+                .parent()
+                .ok_or(err_msg("string conversion failed for path"))?;
+            let template_filename = template_full_path
+                .file_name()
+                .ok_or(err_msg("string conversion failed for path"))?;
 
             let target_filename = template_filename
-                .to_str().ok_or(err_msg("string conversion failed for path"))?
+                .to_str()
+                .ok_or(err_msg("string conversion failed for path"))?
                 .replace(self.target_extension, "");
 
             let mut target_full_path = PathBuf::new();
@@ -490,51 +505,26 @@ impl<'ren> TemplateRenderer<'ren> {
             debug!("target_filename     : {:?}", target_filename);
             debug!("target_full_path    : {:?}", target_full_path);
 
-            for cap in mp_re.captures_iter(template_filename.to_str().ok_or(err_msg("string conversion failed for path"))?) {
-                debug!("REGEX: {:?}", cap);
-            }
-
-            //
-
-
-//            if target_filename.ends_with(".mp") {
-//                debug!("this template is a part of a multipart file");
-//                let v = Vec::from_iter(target_filename.split('.'));
-//                debug!("{:?}", v);
-//                let l = v.len();
-//                let basename = v[0];
-//                let seriesname = v[l - 2];
-//                let filename = v[l - 1];
-//                let indent = v[l - 3];
-//                let mut indent32: i32 = 0;
-//                debug!("mp_base_name        : {:?}", basename);
-//                debug!("mp_series_name      : {:?}", seriesname);
-//                debug!("mp_file_name        : {:?}", filename);
-//                debug!("mp_indent           : {:?}", indent);
-//                if indent != basename {
-//                    if let Ok(i) = indent.parse::<i32>() {
-//                        indent32 = i;
-//                    }
-//                }
-//            }
-
             let target_full_path_str = target_full_path
-                .to_str().ok_or(err_msg("string conversion failed for path"))?;
+                .to_str()
+                .ok_or(err_msg("string conversion failed for path"))?;
 
             if target_full_path_str.ends_with(self.target_extension) {
-                return Err(err_msg("target still contains the template externsion, aborting"));
+                return Err(err_msg(
+                    "target still contains the template externsion, aborting",
+                ));
             }
 
             let out = match tera.render(&template_full_path.to_str().unwrap_or(""), &self.context) {
-                    Ok(out) => out,
-                    Err(e) => {
-                        eprintln!("{}, ", e);
-                        for e in e.iter().skip(1) {
-                            eprintln!("{}", e);
-                        }
-                        ::std::process::exit(1);
+                Ok(out) => out,
+                Err(e) => {
+                    eprintln!("{}, ", e);
+                    for e in e.iter().skip(1) {
+                        eprintln!("{}", e);
                     }
-                };
+                    ::std::process::exit(1);
+                }
+            };
 
             let mut file = OpenOptions::new()
                 .read(true)
@@ -550,8 +540,61 @@ impl<'ren> TemplateRenderer<'ren> {
 
         Ok(())
     }
-}
 
+    pub fn render_multipart(&mut self) -> Result<(), Error> {
+        debug!("refreshing datasources");
+        self.refresh_contexts()?;
+
+        debug!("processing multipart templates");
+        debug!("base_path           : {:?}", self.base_path);
+        debug!("target_tpl_glob     : {:?}", self.target_tpl_glob);
+        debug!("target_extension    : {:?}", self.target_extension);
+
+        let extended_pattern = build_search_path(
+            self.base_path,
+            self.target_tpl_glob,
+            self.target_mp_extension,
+        )?;
+
+        for entry in glob(&extended_pattern).expect("Failed to read glob pattern") {
+            match entry {
+                Ok(path) => {
+                    debug!("found multipart template target");
+                    debug!("mp tpl file         : {:?}", path);
+
+                    let mut file = File::open(path).unwrap();
+                    let mut contents = String::new();
+                    file.read_to_string(&mut contents).unwrap();
+                    //FIXME: transition to fs::read(path) when stable
+                    let mpt: MultipartTemplate = serde_yaml::from_str(&contents).unwrap();
+
+                    println!("{:#?}", mpt);
+                    let base = self.base_path.clone();
+
+                    let parts = build_search_path(&base, &mpt.glob, "")?;
+                    debug!("mp tpl extended     : {:?}", parts);
+
+                    let tera = match Tera::new(&parts) {
+                        Ok(tera) => tera,
+                        Err(e) => {
+                            eprintln!("{}, ", e);
+                            for e in e.iter().skip(1) {
+                                eprintln!("{}", e);
+                            }
+                            ::std::process::exit(1);
+                        }
+                    };
+
+                }
+                Err(e) => println!("ERRROR {:?}", e),
+            }
+        }
+
+        debug!("finished rendering all multipart templates");
+
+        Ok(())
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -569,14 +612,14 @@ mod tests {
         let base_path = "tests/custom/";
         fs::remove_file("tests/custom/custom.out");
 
-        let mut tr = TemplateRenderer::new(&base_path, pattern, extension);
+        let mut tr = TemplateRenderer::new(&base_path, pattern, extension, "");
 
         tr.add_all_datasources();
         tr.add_yml_datasource(DEFAULT_CTX_PREFIX, "custom.yml");
 
-        match tr.render() {
+        match tr.render_default() {
             Err(e) => {
-                eprintln!("{:?}",e);
+                eprintln!("{:?}", e);
                 ::std::process::exit(1);
             }
             _ => (),
@@ -600,13 +643,13 @@ mod tests {
         let base_path = "tests/precedence/";
         fs::remove_file("tests/precedence/precedence.out");
 
-        let mut tr = TemplateRenderer::new(&base_path, pattern, extension);
+        let mut tr = TemplateRenderer::new(&base_path, pattern, extension, "");
 
         tr.add_all_datasources();
 
-        match tr.render() {
+        match tr.render_default() {
             Err(e) => {
-                eprintln!("{:?}",e);
+                eprintln!("{:?}", e);
                 ::std::process::exit(1);
             }
             _ => (),
@@ -627,13 +670,13 @@ mod tests {
         let base_path = "tests/pwd/";
         fs::remove_file("tests/pwd/pwd.out");
 
-        let mut tr = TemplateRenderer::new(&base_path, pattern, extension);
+        let mut tr = TemplateRenderer::new(&base_path, pattern, extension, "");
 
         tr.add_all_datasources();
 
-        match tr.render() {
+        match tr.render_default() {
             Err(e) => {
-                eprintln!("{:?}",e);
+                eprintln!("{:?}", e);
                 ::std::process::exit(1);
             }
             _ => (),
@@ -645,19 +688,18 @@ mod tests {
         assert_eq!(contents, pwd);
     }
 
-
     #[test]
     fn complex_renderer() {
         let extension = DEFAULT_TPL_EXTENSION;
         let pattern = DEFAULT_GLOB;
         let base_path = "tests/complex/";
 
-        let mut tr = TemplateRenderer::new(&base_path, pattern, extension);
+        let mut tr = TemplateRenderer::new(&base_path, pattern, extension, "");
         tr.add_all_datasources();
 
-        match tr.render() {
+        match tr.render_default() {
             Err(e) => {
-                eprintln!("{:?}",e);
+                eprintln!("{:?}", e);
                 ::std::process::exit(1);
             }
             _ => (),
@@ -667,15 +709,24 @@ mod tests {
     #[test]
     fn multipart_renderer() {
         let extension = DEFAULT_TPL_EXTENSION;
+        let mp_extension = DEFAULT_MPTPL_EXTENSION;
         let pattern = DEFAULT_GLOB;
         let base_path = "tests/multipart/";
 
-        let mut tr = TemplateRenderer::new(&base_path, pattern, extension);
+        let mut tr = TemplateRenderer::new(&base_path, pattern, extension, mp_extension);
         tr.add_all_datasources();
 
-        match tr.render() {
+        match tr.render_default() {
             Err(e) => {
-                eprintln!("{:?}",e);
+                eprintln!("{:?}", e);
+                ::std::process::exit(1);
+            }
+            _ => (),
+        }
+
+        match tr.render_multipart() {
+            Err(e) => {
+                eprintln!("{:?}", e);
                 ::std::process::exit(1);
             }
             _ => (),
@@ -688,12 +739,12 @@ mod tests {
         let pattern = DEFAULT_GLOB;
         let base_path = "tests/csv/";
 
-        let mut tr = TemplateRenderer::new(&base_path, pattern, extension);
+        let mut tr = TemplateRenderer::new(&base_path, pattern, extension, "");
         tr.add_all_datasources();
 
-        match tr.render() {
+        match tr.render_default() {
             Err(e) => {
-                eprintln!("{:?}",e);
+                eprintln!("{:?}", e);
                 ::std::process::exit(1);
             }
             _ => (),
@@ -706,13 +757,13 @@ mod tests {
         let pattern = DEFAULT_GLOB;
         let base_path = "tests/legacy/";
 
-        let mut tr = TemplateRenderer::new(&base_path, pattern, extension);
+        let mut tr = TemplateRenderer::new(&base_path, pattern, extension, "");
         tr.set_mode(VariableMode::MiniMode);
         tr.add_all_datasources();
 
-        match tr.render() {
+        match tr.render_default() {
             Err(e) => {
-                eprintln!("{:?}",e);
+                eprintln!("{:?}", e);
                 ::std::process::exit(1);
             }
             _ => (),
