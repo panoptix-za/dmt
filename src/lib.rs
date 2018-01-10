@@ -1,11 +1,11 @@
+extern crate csv;
 extern crate env_logger;
 extern crate glob;
 #[macro_use]
 extern crate log;
+extern crate regex;
 #[macro_use]
 extern crate tera;
-extern crate csv;
-extern crate regex;
 
 #[macro_use]
 extern crate serde_derive;
@@ -584,7 +584,6 @@ impl<'ren> TemplateRenderer<'ren> {
                             ::std::process::exit(1);
                         }
                     };
-
                 }
                 Err(e) => println!("ERRROR {:?}", e),
             }
